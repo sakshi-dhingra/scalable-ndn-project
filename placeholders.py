@@ -1,6 +1,10 @@
 class Node:
     ...
 
+class SensorData:
+    ...
+    # generate data from 8 sensors
+
 class NDNLayer:
     def __init__(self, id, comm, crypto):
         self.id = id
@@ -69,3 +73,5 @@ def main():
 
     node = Node(ndn)
     node.start()
+
+
