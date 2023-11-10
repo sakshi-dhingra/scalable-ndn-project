@@ -1,6 +1,9 @@
 import socket
 import threading
 import time
+import json
+import sys
+
 
 
 class Node:
@@ -226,17 +229,46 @@ class CommunicationLayer:
         if "HELLO" in data:
             self.hello_callback(data)
         
-        
-def main():
-    import sys
 
-    print(sys.argv)
-    node_id = int(sys.argv[1]) 
-    port1 = int(sys.argv[2])
-    peers = [("127.0.0.1", int(port)) for port in sys.argv[3:]]
+def fun(node_name):    
+    node_id = int(node_name[-1])
 
-    node = Node(node_id, "127.0.0.1", port1)
+    file = open('topograph.json')
+    data = json.load(file)
+    # print(data)
+    network_details = data[node_name]
+    listen_port = network_details['listen_port']
+    ip_add=network_details['ip']
+    peer_l=[t[-1] for t  in network_details['peer']]
+    # print(peer_l)
+
+    port1 = listen_port
+    peers = [(ip_add, int(port)) for port in peer_l]
+
+    node = Node(node_id, ip_add, port1)
     node.start(peers)
+
+def main():
+    if(len(sys.argv)==1):
+        rasp_no=1
+    else:
+        rasp_no = int(sys.argv[1]) 
+    Nodes_rasp1=["Node1"
+                 ,"Node2","Node3","Node4","Node5"
+                 ]
+    Nodes_rasp2=["Node6","Node7","Node8","Node9","Node0"]
+    if(rasp_no==1):
+        node_l=Nodes_rasp1
+    else:
+        node_l=Nodes_rasp2
+    
+    thread_l=[]
+    for i in node_l:
+        t1   = threading.Thread(target=fun, args=(i,))
+        t1.start()
+
+    for i in thread_l:
+        i.join()
 
 
 """

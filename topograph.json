@@ -1,0 +1,96 @@
+{
+    "Node1": {
+        "ip": "10.35.70.14",
+        "send_port": 33002,
+        "listen_port": 33001,
+        "peer": [
+            "Node6",
+            "Node7"
+        ]
+    },
+    "Node2": {
+        "ip": "10.35.70.14",
+        "send_port": 33004,
+        "listen_port": 33003,
+        "peer": [
+            "Node3",
+            "Node8"
+        ]
+    },
+    "Node3": {
+        "ip": "10.35.70.14",
+        "send_port": 33006,
+        "listen_port": 33005,
+        "peer": [
+            "Node2",
+            "Node8"
+        ]
+    },
+    "Node4": {
+        "ip": "10.35.70.14",
+        "send_port": 33008,
+        "listen_port": 33007,
+        "peer": [
+            "Node5",
+            "Node9",
+            "Node0"
+        ]
+    },
+    "Node5": {
+        "ip": "10.35.70.14",
+        "send_port": 33010,
+        "listen_port": 33009,
+        "peer": [
+            "Node4",
+            "Node9",
+            "Node0"
+        ]
+    },
+    "Node6": {
+        "ip": "10.35.70.45",
+        "send_port": 33012,
+        "listen_port": 33011,
+        "peer": [
+            "Node1",
+            "Node7"
+        ]
+    },
+    "Node7": {
+        "ip": "10.35.70.45",
+        "send_port": 33014,
+        "listen_port": 33013,
+        "peer": [
+            "Node1",
+            "Node6"
+        ]
+    },
+    "Node8": {
+        "ip": "10.35.70.45",
+        "send_port": 33016,
+        "listen_port": 33015,
+        "peer": [
+            "Node2",
+            "Node3"
+        ]
+    },
+    "Node9": {
+        "ip": "10.35.70.45",
+        "send_port": 33018,
+        "listen_port": 33017,
+        "peer": [
+            "Node4",
+            "Node5",
+            "Node0"
+        ]
+    },
+    "Node0": {
+        "ip": "10.35.70.45",
+        "send_port": 33020,
+        "listen_port": 33019,
+        "peer": [
+            "Node4",
+            "Node5",
+            "Node9"
+        ]
+    }
+}
