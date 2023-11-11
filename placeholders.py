@@ -1,6 +1,7 @@
 import socket
 import threading
 import time
+import cryptoEncryptDecrypt
 
 
 class Node:
@@ -152,11 +153,12 @@ class CryptoLayer:
     def decrypt(self):
         ...
     
-    def sign(self):
-        ...
+    def sign(self, rawData, privateKey): 
+        signature = cryptoEncryptDecrypt.CryptographicSolution.sign(rawData, privateKey)
+        return signature
 
     def verify(self):
-        ...
+        CryptographicSolution.verify()
 
 
 class CommunicationLayer:
