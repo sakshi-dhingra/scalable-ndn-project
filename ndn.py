@@ -2,6 +2,7 @@ import random
 import socket
 import threading
 import time
+from crypto import CryptoLayer
 
 
 class Node: 
@@ -77,6 +78,7 @@ class NDNLayer:
         self.id = id
         self.conn = conn
         self.crypto = crypto
+        self.privatekey, self.publickey = CryptoLayer.rsaKeypair()
         self.get_sensor_data = None
         self.register_callbacks()
         self.fib = {} # FIB
@@ -84,8 +86,10 @@ class NDNLayer:
         self.pit = {} # pending interest table  {data_id:num_id)}
         self.prt = set() # Pending request table   (dataid, req_id)
         self.reply_tracker = set() # on each node to track the data reply of their sensor data
+        self.hellologs = []
+        self.interestlogs = []
+        self.datalogs = []
     
-
     def start_receivers(self):
         self.conn.listen()
 
@@ -94,6 +98,7 @@ class NDNLayer:
             self.send_hello(destination_address, destination_port)
     
     def send_hello(self, destination_address, destination_port):
+        self.hellologs.append(f"Sending HELLO from Node ID: {self.id} to {destination_address} {destination_port}")
         self.conn.send(destination_address, destination_port, f"|HELLO|{self.id}|{self.conn.port}|{self.conn.address}|")
 
     def hello_callback(self, data):
@@ -174,7 +179,7 @@ class NDNLayer:
         interest_packet = f"|INTEREST|{self.id}|{dataID}|{requestID}|{num}|"
         for nodeid in self.fib:
             if nodeid != source_nodeID:
-                #print("Forwarding to neighbor node: ",nodeid)
+                self.interestlogs.append(f"Forwarding INTEREST from Node ID: {self.id} to Node ID: {nodeid}")
                 self.conn.send(self.fib[nodeid]['serverIP'], self.fib[nodeid]['server_port'], interest_packet)
 
     def send_interest(self, dataID, num):
@@ -191,6 +196,7 @@ class NDNLayer:
         # fib: {'1': {'serverIP': '127.0.0.1', 'server_port':'12345'},'2': {'serverIP': '127.0.0.1', 'server_port': '12346'}}
         self.prt.add((dataID,requestID))
         for nodeid in self.fib:
+            self.interestlogs.append(f"Sending INTEREST from Node ID: {self.id} to Node ID: {nodeid}")
             self.conn.send(self.fib[nodeid]['serverIP'], self.fib[nodeid]['server_port'], interest_packet)
 
     def data_callback(self, data):
@@ -221,32 +227,20 @@ class NDNLayer:
         if (dataID, requestID, num) in self.pit:
             nodeID = self.pit[(dataID, requestID, num)]
             data_packet = f"|DATA|{self.id}|{dataID}|{requestID}|{num}|{sensor_data}|"
+            self.datalogs.append(f"Forwarding DATA from Node ID: {self.id} to Node ID: {nodeID}")
             self.conn.send(self.fib[nodeID]['serverIP'], self.fib[nodeID]['server_port'], data_packet)
             del self.pit[(dataID, requestID, num)]
 
     def send_data(self, dataID, requestID, actual_data, nodeid, num): # this will be called when any node has data requested.
         # creating a data packet and sending to the node which asked for data.
         data_packet = f"|DATA|{self.id}|{dataID}|{requestID}|{num}|{actual_data}|"
+        self.datalogs.append(f"Forwarding DATA from Node ID: {self.id} to Node ID: {nodeid}")
         self.conn.send(self.fib[nodeid]['serverIP'], self.fib[nodeid]['server_port'], data_packet)
 
     def register_callbacks(self):
         self.conn.hello_callback = self.hello_callback
         self.conn.data_callback = self.data_callback
         self.conn.interest_callback = self.interest_callback
-
-
-class CryptoLayer:
-    def encrypt(self):
-        ...
-    
-    def decrypt(self):
-        ...
-    
-    def sign(self):
-        ...
-
-    def verify(self):
-        ...
 
 
 class CommunicationLayer:
@@ -256,6 +250,7 @@ class CommunicationLayer:
         self.hello_callback = None
         self.data_callback = None
         self.interest_callback = None
+        self.pause = False
     
     def listen(self):
         threading.Thread(target=self.t_listen).start()
@@ -281,6 +276,9 @@ class CommunicationLayer:
         spawn client thread to form and send data over TCP sessions
         The data packet will be passed from NDNLayer as a function call to CommunicationLayer.
         '''
+        if self.pause:
+            return
+        
         peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         
         try:
@@ -305,6 +303,9 @@ class CommunicationLayer:
             execute interest_callback
 
         '''
+        if self.pause:
+            return
+        
         data = in_socket.recv(1024).decode('utf-8')
         #print(f"Received from peer: '{data}'")
 
