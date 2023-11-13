@@ -13,7 +13,7 @@ class Node:
     This class links sensor data with NDN.
     this layer tells NDNlayer what to do.
     '''
-    def __init__(self, node_id, node_ip, node_port) -> None:
+    def __init__(self, node_id, node_ip, node_port, ndn_privatekey) -> None:
         self.id = node_id
         self.supportedDataID ={
             f"/data/{self.id}/heartrate",
@@ -22,7 +22,7 @@ class Node:
         }
         conn = CommunicationLayer(node_ip, node_port)
         crypto = CryptoLayer()
-        self.ndn = NDNLayer(node_id, conn, crypto)
+        self.ndn = NDNLayer(node_id, conn, crypto, ndn_privatekey)
         self.ndn.get_sensor_data = self.get_sensor_data
 
     def get_sensor_data(self, dataID):
@@ -75,10 +75,11 @@ class Actuator:
 
 class NDNLayer:
 
-    def __init__(self, id, conn, crypto):
+    def __init__(self, id, conn, crypto, ndn_privatekey):
         self.id = id
         self.conn = conn
         self.crypto = crypto
+        self.ndn_privatekey, self.ndn_publickey = ndn_privatekey, ndn_privatekey.public_key()
         self.privatekey, self.publickey = CryptoLayer.rsaKeypair()
         self.get_sensor_data = None
         self.register_callbacks()
@@ -103,7 +104,7 @@ class NDNLayer:
         hello = f"|HELLO|{self.id}|{self.conn.port}|{self.conn.address}|"
         # Generate signature and encode it in base64 format then decode the resultant byte array
         # string ---(sign)---> byte array ---(base64 encode)---> byte array ---(decode)---> string
-        signature = CryptoLayer.sign(hello.encode("utf-8"), self.privatekey).decode("utf-8")
+        signature = CryptoLayer.sign(hello.encode("utf-8"), self.ndn_privatekey).decode("utf-8")
 
         _, publickey_str = CryptoLayer.exportKey(self.privatekey, self.publickey)
         publickey_str = base64.b64encode(publickey_str.encode("utf-8")).decode("utf-8")
@@ -131,10 +132,9 @@ class NDNLayer:
         publickey = CryptoLayer.loadPublicKey(base64.b64decode(publickey_str))
 
         # Verify signature using public key, add neighbor to FIB if successful
-        if CryptoLayer.verify(f"|HELLO|{nodeID}|{server_port}|{server_IP}|".encode("utf-8"), signature, publickey):
+        if CryptoLayer.verify(f"|HELLO|{nodeID}|{server_port}|{server_IP}|".encode("utf-8"), signature, self.ndn_publickey):
             # updating fib to add server port and IP.
-            self.fib[nodeID] = {"serverIP":server_IP}
-            self.fib[nodeID]["server_port"] = server_port
+            self.fib[nodeID] = {"serverIP":server_IP, "server_port": server_port, "publickey": publickey}
             #print("NEIGHBORS: ", self.fib)
 
 
@@ -162,7 +162,14 @@ class NDNLayer:
         '''
 
         s_interest = interest.split("|")
-        nodeID, dataID, request_id, num = int(s_interest[2]), s_interest[3], int(s_interest[4]), int(s_interest[5])
+        # decrypt interest
+        nodeID, encrypted = int(s_interest[2]), s_interest[3]
+        try:
+            decrypted = CryptoLayer.decrypt(encrypted, self.privatekey).split("|")
+        except Exception:
+            return
+        
+        dataID, request_id, num = decrypted[0], int(decrypted[1]), int(decrypted[2])
         
         sensor_data = self.get_sensor_data(dataID)
         if sensor_data and (dataID, request_id, num) not in self.reply_tracker: # some value came from node's sensor
@@ -188,9 +195,13 @@ class NDNLayer:
         # pit = {(data_id, request_id, num) :node_id}
         # fib: {'1': {'serverIP': '127.0.0.1', 'server_port': '12345'},'2': {'serverIP': '127.0.0.1', 'server_port': '12346'}}
 
-        interest_packet = f"|INTEREST|{self.id}|{dataID}|{requestID}|{num}|"
+        # interest_packet = f"|INTEREST|{self.id}|{dataID}|{requestID}|{num}|"
+        header = f"|INTEREST|{self.id}"
+        to_encrypt = f"{dataID}|{requestID}|{num}"
         for nodeid in self.fib:
             if nodeid != source_nodeID:
+                encrypted = CryptoLayer.encrypt(to_encrypt.encode("utf-8"), self.fib[nodeid]['publickey'])
+                interest_packet = f"{header}|{encrypted}|"
                 self.interestlogs.append(f"Forwarding INTEREST from Node ID: {self.id} to Node ID: {nodeid}")
                 self.conn.send(self.fib[nodeid]['serverIP'], self.fib[nodeid]['server_port'], interest_packet)
 
@@ -204,10 +215,13 @@ class NDNLayer:
         # prt = (dataid, req_id)
 
         requestID = random.randint(1, 99999)
-        interest_packet = f"|INTEREST|{self.id}|{dataID}|{requestID}|{num}|"
+        header = f"|INTEREST|{self.id}"
+        to_encrypt = f"{dataID}|{requestID}|{num}"
         # fib: {'1': {'serverIP': '127.0.0.1', 'server_port':'12345'},'2': {'serverIP': '127.0.0.1', 'server_port': '12346'}}
         self.prt.add((dataID,requestID))
         for nodeid in self.fib:
+            encrypted = CryptoLayer.encrypt(to_encrypt.encode("utf-8"), self.fib[nodeid]['publickey'])
+            interest_packet = f"{header}|{encrypted}|"
             self.interestlogs.append(f"Sending INTEREST from Node ID: {self.id} to Node ID: {nodeid}")
             self.conn.send(self.fib[nodeid]['serverIP'], self.fib[nodeid]['server_port'], interest_packet)
 
@@ -223,7 +237,16 @@ class NDNLayer:
 
         # data_callback is used to receive callback from Comm Layer. Once received, data_callback will split it and send to forward_data.
         s_data = data.split("|")
-        nodeID, dataID, requestID, num, sensor_data = int(s_data[2]), s_data[3], int(s_data[4]), int(s_data[5]), s_data[6]
+
+        # decrypt data
+        nodeID, encrypted = int(s_data[2]), s_data[3]
+        try:
+            decrypted = CryptoLayer.decrypt(encrypted, self.privatekey).split("|")
+        except Exception:
+            return
+        
+        dataID, requestID, num, sensor_data = decrypted[0], int(decrypted[1]), int(decrypted[2]), decrypted[3]
+        
         if (dataID, requestID) in self.prt:
            print("Sensor Data is received!!!", sensor_data)
         else:
@@ -235,17 +258,27 @@ class NDNLayer:
         '''
         # pit = {(dataID, requestID, num):destination node_id}
         # fib: {'1': {'serverIP': '127.0.0.1', 'server_port': '12345'},'2': {'serverIP': '127.0.0.1', 'server_port': '12346'}}
-
+        
         if (dataID, requestID, num) in self.pit:
             nodeID = self.pit[(dataID, requestID, num)]
-            data_packet = f"|DATA|{self.id}|{dataID}|{requestID}|{num}|{sensor_data}|"
+
+            header = f"|DATA|{self.id}"
+            to_encrypt = f"{dataID}|{requestID}|{num}|{sensor_data}"
+            encrypted = CryptoLayer.encrypt(to_encrypt.encode("utf-8"), self.fib[nodeID]['publickey'])
+            data_packet = f"{header}|{encrypted}|"
+            # data_packet = f"|DATA|{self.id}|{dataID}|{requestID}|{num}|{sensor_data}|"
             self.datalogs.append(f"Forwarding DATA from Node ID: {self.id} to Node ID: {nodeID}")
             self.conn.send(self.fib[nodeID]['serverIP'], self.fib[nodeID]['server_port'], data_packet)
             del self.pit[(dataID, requestID, num)]
 
     def send_data(self, dataID, requestID, actual_data, nodeid, num): # this will be called when any node has data requested.
         # creating a data packet and sending to the node which asked for data.
-        data_packet = f"|DATA|{self.id}|{dataID}|{requestID}|{num}|{actual_data}|"
+        # data_packet = f"|DATA|{self.id}|{dataID}|{requestID}|{num}|{actual_data}|"
+        
+        header = f"|DATA|{self.id}"
+        to_encrypt = f"{dataID}|{requestID}|{num}|{actual_data}"
+        encrypted = CryptoLayer.encrypt(to_encrypt.encode("utf-8"), self.fib[nodeid]['publickey'])
+        data_packet = f"{header}|{encrypted}|"
         self.datalogs.append(f"Forwarding DATA from Node ID: {self.id} to Node ID: {nodeid}")
         self.conn.send(self.fib[nodeid]['serverIP'], self.fib[nodeid]['server_port'], data_packet)
 

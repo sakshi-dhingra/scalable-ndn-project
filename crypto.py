@@ -46,18 +46,18 @@ class CryptoLayer():
                 label = None
             )
         )
-        return cipherText
+        return base64.b64encode(cipherText).decode("utf-8")
 
     def decrypt(message, privateKey):
         plaintext = privateKey.decrypt(
-            message,
+            base64.b64decode(message),
             padding.OAEP(
                 mgf = padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm = hashes.SHA256(),
                 label = None
             )
         )
-        return plaintext
+        return plaintext.decode("utf-8")
     
     def exportKey(privateKey, publicKey):
 
@@ -76,3 +76,12 @@ class CryptoLayer():
 
     def loadPublicKey(public_key_string):
         return serialization.load_pem_public_key(public_key_string, backend=default_backend())
+    
+    def loadPrivateKey(private_key_path):
+        with open(private_key_path, "rb") as key_file:
+            private_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None,  # Set the password if your key is encrypted
+                backend=default_backend()
+            )
+        return private_key

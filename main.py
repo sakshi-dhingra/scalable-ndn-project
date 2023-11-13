@@ -14,12 +14,14 @@ def node_proc(nodes, node_id):
 
     this will create and start a single Node object
     '''
+    ndn_privatekey = CryptoLayer.loadPrivateKey("ndn.pem")
+
     peer_details = []
     for peer_nodeid in nodes[node_id]["peers"]:
         peer = (nodes[peer_nodeid]["server_IP"], int(nodes[peer_nodeid]["server_port"]))
         peer_details.append(peer)
 
-    node = Node(node_id, nodes[node_id]["server_IP"], nodes[node_id]["server_port"])
+    node = Node(node_id, nodes[node_id]["server_IP"], nodes[node_id]["server_port"], ndn_privatekey)
     node_objects[node_id] = node # saving object to access it
     node.start(peer_details)
 
