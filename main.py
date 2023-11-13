@@ -93,8 +93,9 @@ def main():
             # code
         elif user_input == "11":
             nodeID = input("Source nodeID: ")
-            CryptoLayer.exportKey(nodeID, node_objects[int(nodeID)].ndn.privatekey, node_objects[int(nodeID)].ndn.publickey)
-
+            privkey, pubkey = CryptoLayer.exportKey(node_objects[int(nodeID)].ndn.privatekey, node_objects[int(nodeID)].ndn.publickey)
+            print(privkey)
+            print(pubkey)
         elif user_input == "12":
             exit()
 

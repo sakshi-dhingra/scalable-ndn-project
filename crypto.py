@@ -59,18 +59,20 @@ class CryptoLayer():
         )
         return plaintext
     
-    def exportKey(prefix, privateKey, publicKey):
+    def exportKey(privateKey, publicKey):
 
         binaryPrivateKey = privateKey.private_bytes(
             encoding = serialization.Encoding.PEM,
             format = serialization.PrivateFormat.PKCS8,
             encryption_algorithm = serialization.NoEncryption()
         )
-        print(binaryPrivateKey.decode("utf-8"))
         
         binaryPublicKey = publicKey.public_bytes(
             encoding = serialization.Encoding.PEM,
             format = serialization.PublicFormat.SubjectPublicKeyInfo
         )
 
-        print(binaryPublicKey.decode("utf-8"))
+        return binaryPrivateKey.decode("utf-8"), binaryPublicKey.decode("utf-8")
+
+    def loadPublicKey(public_key_string):
+        return serialization.load_pem_public_key(public_key_string, backend=default_backend())

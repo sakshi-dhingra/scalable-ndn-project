@@ -1,3 +1,4 @@
+import base64
 import random
 import socket
 import threading
@@ -99,7 +100,14 @@ class NDNLayer:
     
     def send_hello(self, destination_address, destination_port):
         self.hellologs.append(f"Sending HELLO from Node ID: {self.id} to {destination_address} {destination_port}")
-        self.conn.send(destination_address, destination_port, f"|HELLO|{self.id}|{self.conn.port}|{self.conn.address}|")
+        hello = f"|HELLO|{self.id}|{self.conn.port}|{self.conn.address}|"
+        # Generate signature and encode it in base64 format then decode the resultant byte array
+        # string ---(sign)---> byte array ---(base64 encode)---> byte array ---(decode)---> string
+        signature = CryptoLayer.sign(hello.encode("utf-8"), self.privatekey).decode("utf-8")
+
+        _, publickey_str = CryptoLayer.exportKey(self.privatekey, self.publickey)
+        publickey_str = base64.b64encode(publickey_str.encode("utf-8")).decode("utf-8")
+        self.conn.send(destination_address, destination_port, hello + f"{publickey_str}|{signature}|")
 
     def hello_callback(self, data):
         '''
@@ -118,12 +126,16 @@ class NDNLayer:
         '''
 
         s_data = data.split("|")
-        nodeID, server_port, server_IP = int(s_data[2]), int(s_data[3]), s_data[4]
+        nodeID, server_port, server_IP, publickey_str, signature  = int(s_data[2]), int(s_data[3]), s_data[4], s_data[5], s_data[6]
 
-        # updating fib to add server port and IP.
-        self.fib[nodeID] = {"serverIP":server_IP}
-        self.fib[nodeID]["server_port"] = server_port
-        #print("NEIGHBORS: ", self.fib)
+        publickey = CryptoLayer.loadPublicKey(base64.b64decode(publickey_str))
+
+        # Verify signature using public key, add neighbor to FIB if successful
+        if CryptoLayer.verify(f"|HELLO|{nodeID}|{server_port}|{server_IP}|".encode("utf-8"), signature, publickey):
+            # updating fib to add server port and IP.
+            self.fib[nodeID] = {"serverIP":server_IP}
+            self.fib[nodeID]["server_port"] = server_port
+            #print("NEIGHBORS: ", self.fib)
 
 
     def interest_callback(self, interest):
@@ -319,8 +331,6 @@ class CommunicationLayer:
             self.hello_callback(data)
         
         
-
-
 
 """
 Python script to generate topology dictionary for both Raspberry Pis which tells for a given node:
