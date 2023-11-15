@@ -1,8 +1,7 @@
 import random
 
 class SensorData:
-    def __init__(self, wristband_id):
-        self.wristband_id = wristband_id
+    def __init__(self):
         self.data = {
             "heartrate": 0,
             "blood_pressure_systolic": 0,
@@ -25,22 +24,17 @@ class SensorData:
         self.data["cholesterol_level"] = round(random.uniform(120.0, 240.0), 1)
 
     def get_data(self, data_id=None):
-        if data_id is None:
-            return self.data
+        self.generate_random_data()
+        if data_id in self.data:
+            return self.data[data_id]
         else:
-            if data_id in self.data:
-                return {data_id: self.data[data_id]}
-            else:
-                return f"No data available for {data_id}"
+            return f"No data available for {data_id}"
 
 # Example Usage
-wristband_id = 2
-sensor_data = SensorData(wristband_id)
-print(sensor_data)
-
-# Generate random data
-print(sensor_data.generate_random_data())
+sensor_data = SensorData()
 
 # Get all sensor data
 all_sensor_data = sensor_data.get_data()
 print("All Sensor Data:", all_sensor_data)
+
+print(sensor_data.get_data("heartrate"))

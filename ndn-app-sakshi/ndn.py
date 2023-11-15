@@ -4,7 +4,7 @@ import socket
 import threading
 import time
 from crypto import CryptoLayer
-
+from sensorData import SensorData
 
 class Node: 
     '''
@@ -15,62 +15,22 @@ class Node:
     '''
     def __init__(self, node_id, node_ip, node_port, ndn_privatekey) -> None:
         self.id = node_id
-        self.supportedDataID ={
-            f"/data/{self.id}/heartrate",
-            f"/data/{self.id}/bloodpressure",
-            f"/data/{self.id}/temperature"
-        }
+        self.supportedDataID = f"/data/{self.id}"
+        self.sensor_data = SensorData()
         conn = CommunicationLayer(node_ip, node_port)
         crypto = CryptoLayer()
         self.ndn = NDNLayer(node_id, conn, crypto, ndn_privatekey)
         self.ndn.get_sensor_data = self.get_sensor_data
 
     def get_sensor_data(self, dataID):
-        if dataID in self.supportedDataID:
-            return random.random()
+        if self.supportedDataID in dataID:
+            return self.sensor_data.get_data(dataID.replace(self.supportedDataID + "/", ""))
 
     def start(self, peers):
         self.ndn.start_receivers() # application layer tells NDNlayer to keep listening
         while True:
             time.sleep(2)
             self.ndn.keep_alives(peers) # application layer tells NDNLayer to send keepalives
-
- 
-class SensorData:
-    '''
-    take 8 medical parameters of measurement of human body eg; heartrate, blood pressure, etc. 
-    generate random data for those 8 sensors
-    
-    '''
-    def __init__(self):
-        ...
-
-    def get_data(self, data_id):
-        '''
-        return data based on data_id
-        data_id will have hierarchy
-
-        eg; 
-        /data/wristband/2/sensor/ will give data for all sensors
-            {
-                "heartrate": "xyz",
-                "temperature": "xyz",
-                "blood_pressure": "xyz",
-            }
-        /data/wristband/2/sensor/heart will give
-             {
-                "heartrate": "xyz"
-            }   
-        
-        Write python code which can flexibly change amount of details as per requirement (see examples above)
-        '''
-    
-
-class Actuator:
-    '''
-    change value of data as per command.
-    '''
-
 
 
 class NDNLayer:
@@ -253,7 +213,9 @@ class NDNLayer:
         
         if (dataID, requestID) in self.prt:
            self.datalogs.append(f"DATA packet is decrypted")
+           print(f"DATA : {decrypted[0]} is received with value: {sensor_data}")
            self.datalogs.append(f"DATA : {decrypted[0]} is received with value: {sensor_data}")
+           self.prt.remove((dataID, requestID))
         else:
             self.forward_data(dataID, requestID, sensor_data, num)
 
@@ -286,7 +248,7 @@ class NDNLayer:
         encrypted = CryptoLayer.encrypt(to_encrypt.encode("utf-8"), self.fib[nodeid]['publickey'])
         data_packet = f"{header}|{encrypted}|"
         self.datalogs.append(f"Encrypting DATA from Node ID: {self.id} to Node ID: {nodeid}")
-        self.datalogs.append(f"Forwarding DATA from ➜ Node {self.id} to ➜ Node  {nodeid}")
+        self.datalogs.append(f"Sending DATA from ➜ Node {self.id} to ➜ Node  {nodeid}")
         self.conn.send(self.fib[nodeid]['serverIP'], self.fib[nodeid]['server_port'], data_packet)
 
     def register_callbacks(self):
