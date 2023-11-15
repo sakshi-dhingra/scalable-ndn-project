@@ -13,14 +13,16 @@ class Node:
     This class links sensor data with NDN.
     this layer tells NDNlayer what to do.
     '''
-    def __init__(self, node_id, node_ip, node_port, ndn_privatekey) -> None:
+    def __init__(self, node_id, node_ip, node_port, ndn_privatekey, gateway_privatekey, designated_gateway=False, gateway_comm=None) -> None:
         self.id = node_id
-        self.supportedDataID = f"/data/{self.id}"
+        self.network_prefix = "/wristband/"
+        self.supportedDataID = f"{self.network_prefix}{self.id}"
         self.sensor_data = SensorData()
         conn = CommunicationLayer(node_ip, node_port)
         crypto = CryptoLayer()
-        self.ndn = NDNLayer(node_id, conn, crypto, ndn_privatekey)
+        self.ndn = NDNLayer(node_id, conn, crypto, ndn_privatekey, gateway_privatekey, designated_gateway, gateway_comm)
         self.ndn.get_sensor_data = self.get_sensor_data
+        self.ndn.network_prefix = self.network_prefix
 
     def get_sensor_data(self, dataID):
         if self.supportedDataID in dataID:
@@ -35,22 +37,30 @@ class Node:
 
 class NDNLayer:
 
-    def __init__(self, id, conn, crypto, ndn_privatekey):
+    def __init__(self, id, conn, crypto, ndn_privatekey, gateway_privatekey, designated_gateway, gateway_comm):
         self.id = id
         self.conn = conn
         self.crypto = crypto
         self.ndn_privatekey, self.ndn_publickey = ndn_privatekey, ndn_privatekey.public_key()
+        self.gateway_privatekey, self.gateway_publickey = gateway_privatekey, gateway_privatekey.public_key()
+        self.network_prefix = None
+        self.designated_gateway = designated_gateway
+        self.gateway_comm = gateway_comm
         self.privatekey, self.publickey = CryptoLayer.rsaKeypair()
         self.get_sensor_data = None
         self.register_callbacks()
         self.fib = {} # FIB
         self.cache = set() # Content store
         self.pit = {} # pending interest table  {data_id:num_id)}
-        self.prt = set() # Pending request table   (dataid, req_id)
+        self.gpit = {}
+        self.prt = {} # Pending request table   (dataid, req_id)
+        self.gprt = set() # Pending request table for gateway forwards
         self.reply_tracker = set() # on each node to track the data reply of their sensor data
+        
         self.hellologs = []
         self.interestlogs = []
         self.datalogs = []
+        self.gatewaylogs = []
     
     def start_receivers(self):
         self.conn.listen()
@@ -125,25 +135,99 @@ class NDNLayer:
         s_interest = interest.split("|")
         # decrypt interest
         nodeID, encrypted = int(s_interest[2]), s_interest[3]
+        
         try:
             decrypted = CryptoLayer.decrypt(encrypted, self.privatekey).split("|")
         except Exception:
+            self.interestlogs.append(f"Failed to decrypt INTEREST from Node ID: {nodeID} on Node ID: {self.id}")
             return
         
         dataID, request_id, num = decrypted[0], int(decrypted[1]), int(decrypted[2])
-        
-        sensor_data = self.get_sensor_data(dataID)
-        if sensor_data and (dataID, request_id, num) not in self.reply_tracker: # some value came from node's sensor
-            self.interestlogs.append(f"Interest packet is decrypted")
-            self.reply_tracker.add((dataID, request_id, num))
-            self.send_data(dataID, request_id, sensor_data, nodeID, num)
-        else:
-            # Add entry to PIT and forward if request not already  received
-            if (dataID, request_id, num) not in self.pit:
-                self.pit[(dataID, request_id, num)] = nodeID
-                self.forward_interest(nodeID, dataID, request_id, num)
-                #print("Current state of PIT:", self.pit)
 
+        # check if I am the gateway and this is a foreign packet
+        if self.designated_gateway and (self.network_prefix not in dataID) and (dataID not in self.gpit):
+            self.gpit[dataID] = (request_id, num, nodeID)
+            self.gatewaylogs.append(f"Received INTEREST from Node ID: {nodeID} on Node ID: {self.id}")
+            self.gatewaylogs.append(f"Decrypting INTEREST from Node ID: {nodeID} on Node ID: {self.id}")
+            self.send_gateway_packet(dataID)
+        else:
+            self.interestlogs.append(f"Received INTEREST from Node ID: {nodeID} on Node ID: {self.id}")
+            self.interestlogs.append(f"Decrypting INTEREST from Node ID: {nodeID} on Node ID: {self.id}")
+            sensor_data = self.get_sensor_data(dataID)
+            if sensor_data:
+                if ((dataID, request_id, num) not in self.reply_tracker): # some value came from node's sensor
+                    if sensor_data and ((dataID, request_id, num) not in self.reply_tracker):
+                        self.reply_tracker.add((dataID, request_id, num))
+                        self.send_data(dataID, request_id, sensor_data, nodeID, num)
+            else:
+                # Add entry to PIT and forward if request not already received
+                if (dataID, request_id, num) not in self.pit:
+                    self.pit[(dataID, request_id, num)] = nodeID
+                    self.forward_interest(nodeID, dataID, request_id, num)
+                    #print("Current state of PIT:", self.pit)
+
+    def send_gateway_packet(self, dataID, data=None):
+        """
+        sends gateway packet to gateway peer
+
+        1. Send EG packet if data is None
+        2. Else send EG packet
+        """
+        
+        if data:
+            header = f"EG_REPLY"
+            to_encrypt = f"{dataID}|{data}"
+            encrypted = CryptoLayer.encrypt(to_encrypt.encode("utf-8"), self.gateway_publickey)
+            eg_reply_packet = f"{header}|{encrypted}"
+            print(f"Sending EG_REPLY from Node ID: {self.id} to gateway peer")
+            self.gatewaylogs.append(f"Encrypting EG_REPLY from Node ID: {self.id} to gateway peer")
+            self.gatewaylogs.append(f"Sending EG_REPLY from Node ID: {self.id} to gateway peer")
+            self.conn.send(self.gateway_comm[0], self.gateway_comm[1], eg_reply_packet)
+        else:
+            header = f"EG"
+            to_encrypt = f"{dataID}"
+            encrypted = CryptoLayer.encrypt(to_encrypt.encode("utf-8"), self.gateway_publickey)
+            eg_packet = f"{header}|{encrypted}"
+            print(f"Sending EG from Node ID: {self.id} to gateway peer")
+            self.gatewaylogs.append(f"Encrypting EG from Node ID: {self.id} to gateway peer")
+            self.gatewaylogs.append(f"Sending EG from Node ID: {self.id} to gateway peer")
+            self.conn.send(self.gateway_comm[0], self.gateway_comm[1], eg_packet)
+    
+    def gateway_callback(self, gwdata):
+        if not self.designated_gateway:
+            return
+        
+        print("GW RECV")
+        s_gwdata = gwdata.split("|")
+
+        # decrypt data
+        eg_type, encrypted = s_gwdata[0], s_gwdata[1]
+        
+        # Do nothing if decryption failed
+        try:
+            decrypted = CryptoLayer.decrypt(encrypted, self.gateway_privatekey)
+        except Exception:
+            print("GW Decryption failed!")
+            self.gatewaylogs("Decryption failed")
+            return
+        
+        if eg_type == "EG":
+            dataID = decrypted
+            self.gatewaylogs.append(f"Received EG from gateway peer")
+            print("Received EG from gateway peer")
+            self.send_interest(dataID, 0, gateway_interest=True)
+        
+        elif eg_type == "EG_REPLY":
+            dataID, sensor_data = decrypted.split("|")
+
+            if dataID in self.gpit:
+                # self.gpit[dataID] = (request_id, num, nodeID)
+                request_id, num, nodeID = int(self.gpit[dataID][0]), int(self.gpit[dataID][1]), int(self.gpit[dataID][2])
+                print("Received EG reply from gateway peer")
+                self.gatewaylogs.append(f"Received EG_REPLY from gateway peer")
+                self.gatewaylogs.append(f"Sending DATA from Node ID: {self.id} to Node ID: {nodeID}")
+                self.send_data(dataID, request_id, sensor_data, nodeID, num)
+                del self.gpit[dataID]
 
     def forward_interest(self, source_nodeID, dataID, requestID, num):
         '''
@@ -168,7 +252,7 @@ class NDNLayer:
                 self.interestlogs.append(f"Forwarding INTEREST from Node ID: {self.id} to Node ID: {nodeid}")
                 self.conn.send(self.fib[nodeid]['serverIP'], self.fib[nodeid]['server_port'], interest_packet)
 
-    def send_interest(self, dataID, num):
+    def send_interest(self, dataID, num, gateway_interest=False):
         '''
         initiate interest packets to neighbors
 
@@ -181,7 +265,10 @@ class NDNLayer:
         header = f"|INTEREST|{self.id}"
         to_encrypt = f"{dataID}|{requestID}|{num}"
         # fib: {'1': {'serverIP': '127.0.0.1', 'server_port':'12345'},'2': {'serverIP': '127.0.0.1', 'server_port': '12346'}}
-        self.prt.add((dataID,requestID))
+        if gateway_interest:
+            self.gprt.add((dataID,requestID))
+        else:
+            self.prt[(dataID,requestID)] = time.time()
         for nodeid in self.fib:
             encrypted = CryptoLayer.encrypt(to_encrypt.encode("utf-8"), self.fib[nodeid]['publickey'])
             interest_packet = f"{header}|{encrypted}|"
@@ -211,13 +298,21 @@ class NDNLayer:
         
         dataID, requestID, num, sensor_data = decrypted[0], int(decrypted[1]), int(decrypted[2]), decrypted[3]
         
-        if (dataID, requestID) in self.prt:
-           self.datalogs.append(f"DATA packet is decrypted")
-           print(f"DATA : {decrypted[0]} is received with value: {sensor_data}")
-           self.datalogs.append(f"DATA : {decrypted[0]} is received with value: {sensor_data}")
-           self.prt.remove((dataID, requestID))
+        if self.designated_gateway and (dataID, requestID) in self.gprt:
+           self.gatewaylogs.append(f"Received DATA ({dataID}) from Node ID: {nodeID} on Node ID: {self.id}")
+           self.gatewaylogs.append(f"Decrypting DATA ({dataID}) = ({sensor_data}) from Node ID: {nodeID} on Node ID: {self.id}")
+           self.send_gateway_packet(dataID, sensor_data)
+           self.gprt.remove((dataID, requestID))
+        
         else:
-            self.forward_data(dataID, requestID, sensor_data, num)
+            if (dataID, requestID) in self.prt:
+                self.datalogs.append(f"Received DATA ({dataID}) from Node ID: {nodeID} on Node ID: {self.id}")
+                self.datalogs.append(f"Decrypting DATA ({dataID}) = ({sensor_data}) from Node ID: {nodeID} on Node ID: {self.id}")
+                print(f"DATA : {decrypted[0]} is received with value: {sensor_data}")
+                print(f"TOTAL TIME TAKEN : {(time.time() - self.prt[(dataID, requestID)])} seconds.")
+                del self.prt[(dataID, requestID)]
+            else:
+                self.forward_data(dataID, requestID, sensor_data, num)
 
     def forward_data(self, dataID, requestID, sensor_data, num):
         '''
@@ -248,13 +343,14 @@ class NDNLayer:
         encrypted = CryptoLayer.encrypt(to_encrypt.encode("utf-8"), self.fib[nodeid]['publickey'])
         data_packet = f"{header}|{encrypted}|"
         self.datalogs.append(f"Encrypting DATA from Node ID: {self.id} to Node ID: {nodeid}")
-        self.datalogs.append(f"Sending DATA from ➜ Node {self.id} to ➜ Node  {nodeid}")
+        self.datalogs.append(f"Sending DATA from Node {self.id} to Node ID: {nodeid}")
         self.conn.send(self.fib[nodeid]['serverIP'], self.fib[nodeid]['server_port'], data_packet)
 
     def register_callbacks(self):
         self.conn.hello_callback = self.hello_callback
         self.conn.data_callback = self.data_callback
         self.conn.interest_callback = self.interest_callback
+        self.conn.gateway_callback = self.gateway_callback
 
 
 class CommunicationLayer:
@@ -264,6 +360,7 @@ class CommunicationLayer:
         self.hello_callback = None
         self.data_callback = None
         self.interest_callback = None
+        self.gateway_callback = None
         self.pause = False
     
     def listen(self):
@@ -331,6 +428,9 @@ class CommunicationLayer:
         
         if "HELLO" in data:
             self.hello_callback(data)
+        
+        if "EG" == data[:2]:
+            self.gateway_callback(data)
         
         
 

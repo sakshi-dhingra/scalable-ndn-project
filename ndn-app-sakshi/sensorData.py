@@ -12,6 +12,7 @@ class SensorData:
             "glucose_level": 0.0,
             "cholesterol_level": 0.0,
         }
+        self.generate_random_data()
 
     def generate_random_data(self):
         self.data["heartrate"] = random.randint(60, 100)
@@ -29,12 +30,3 @@ class SensorData:
             return self.data[data_id]
         else:
             return f"No data available for {data_id}"
-
-# Example Usage
-sensor_data = SensorData()
-
-# Get all sensor data
-all_sensor_data = sensor_data.get_data()
-print("All Sensor Data:", all_sensor_data)
-
-print(sensor_data.get_data("heartrate"))
